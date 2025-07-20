@@ -1,60 +1,65 @@
-// context/ChatContext.tsx
-import { chatCompleteProxy } from '../services/openAIProxy';
-import { AuthContext } from './AuthContext';
-import { useContext, useState } from 'react';
+// src/context/ChatContext.tsx
+import { createContext, useContext, useState } from 'react';
+import { chatCompleteProxy } from '../services/openaiProxy';
 import { nanoid } from 'nanoid';
 
+export type Message = { id: string; role: 'user' | 'assistant' | 'system'; content: string };
+export type Chat = { id: string; title: string; messages: Message[] };
 
-type Chat = {
-    id: string;
-    title: string;
-    messages: {id: string; role: 'user'|'assistant'; content: string}[];
+export const ChatContext = createContext<{
+  chats: Chat[];
+  newChat: () => string;
+  send: (chatId: string, text: string) => Promise<void>;
+}>({} as any);
+
+export const ChatProvider = ({ children }) => {
+  const [chats, setChats] = useState<Chat[]>([]);
+
+  const newChat = () => {
+    const id = nanoid();
+    setChats(cs => [{ id, title: 'New chat', messages: [] }, ...cs]);
+    return id;
   };
-  
-  export const ChatProvider = ({children}) => {
-    const {apiKey} = useContext(AuthContext);
-    const [chats, setChats] = useState<Chat[]>([]);
-  
-    const newChat = () => {
-      const blank: Chat = {
-        id: nanoid(),
-        title: 'New chat',
-        messages: [],
-      };
-      setChats([blank, ...chats]);
-      return blank.id;
-    };
-  
-    const send = async (chatId: string, userText: string) => {
-      setChats(cs =>
-        cs.map(c =>
-          c.id === chatId
-            ? {...c, messages: [...c.messages, {id: nanoid(), role: 'user', content: userText}]}
-            : c,
-        ),
-      );
-  
- 
-      const assistantReply = await chatCompleteProxy(
-        chats.find(c => c.id === chatId)!.messages.concat({
-          role: 'user',
-          content: userText,
-        }),
-      );
-  
-      setChats(cs =>
-        cs.map(c =>
-          c.id === chatId
-            ? {...c, messages: [...c.messages, {id: nanoid(), role: 'assistant', content: assistantReply}]}
-            : c,
-        ),
-      );
-    };
-  
-    return (
-      <ChatContext.Provider value={{chats, newChat, send}}>
-        {children}
-      </ChatContext.Provider>
+
+  const send = async (chatId: string, userText: string) => {
+    // 1️⃣ add the user's message locally
+    setChats(cs =>
+      cs.map(c =>
+        c.id === chatId
+          ? {
+              ...c,
+              messages: [...c.messages, { id: nanoid(), role: 'user', content: userText }],
+            }
+          : c,
+      ),
+    );
+
+    // 2️⃣ collect history + new message to send to proxy
+    const history = chats.find(c => c.id === chatId)?.messages ?? [];
+    const assistantReply = await chatCompleteProxy([
+      ...history.map(({ role, content }) => ({ role, content })), // strip id
+      { role: 'user', content: userText },
+    ]);
+
+    // 3️⃣ add assistant reply
+    setChats(cs =>
+      cs.map(c =>
+        c.id === chatId
+          ? {
+              ...c,
+              messages: [
+                ...c.messages,
+                { id: nanoid(), role: 'assistant', content: assistantReply },
+              ],
+            }
+          : c,
+      ),
     );
   };
-  
+
+  return (
+    <ChatContext.Provider value={{ chats, newChat, send }}>
+      {children}
+    </ChatContext.Provider>
+  );
+};
